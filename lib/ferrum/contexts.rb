@@ -9,9 +9,16 @@ module Ferrum
     attr_reader :contexts
 
     def initialize(client)
-      @contexts = Concurrent::Map.new
+      @contexts = Concurrent::Map.new do |hsh, _key|
+        # Return the default context if context ID isn't found
+        hsh[nil]
+      end
       @client = client
-      @default_context = create_default_context if @client.options.use_default_context
+      if @client.options.use_default_context
+        @default_context = create_default_context
+        discover_contexts
+      end
+
       subscribe
       auto_attach
       discover
@@ -22,17 +29,15 @@ module Ferrum
     end
 
     def create_default_context
-      default_context_id = compute_default_context_id
       # Targets created in this context will not be created with a browserContextId
-      @contexts[default_context_id] = Context.new(@client, self, nil)
+      @contexts[nil] = Context.new(@client, self, nil)
     end
 
-    # Compute the default context ID by looking for contexts not returned by Target.getBrowserContexts
-    def compute_default_context_id
-      created_contexts = Set.new(@client.command("Target.getBrowserContexts")["browserContextIds"])
-      targets = @client.command("Target.getTargets")["targetInfos"]
-      all_contexts = Set.new(targets.map { |target| target["browserContextId"] })
-      (all_contexts - created_contexts).first
+    def discover_contexts
+      context_ids = @client.command("Target.getBrowserContexts")["browserContextIds"]
+      context_ids.each do |context_id|
+        @contexts[context_id] = Context.new(@client, self, context_id)
+      end
     end
 
     def each(&block)
